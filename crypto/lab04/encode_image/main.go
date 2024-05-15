@@ -10,17 +10,17 @@ import (
 )
 
 func main() {
-	img, s1, s2, perm, key, _ := getInput()
+	img, s1, s2, perm, key, iv := getInput()
 	imgBits := jpegToBits(img)
+
 	w, h := img.Bounds().Max.X, img.Bounds().Max.Y
 
-	encImg := encTextEcb(imgBits, s1, s2, perm, key)
+	encImg := encTextCbc(imgBits, s1, s2, perm, key, iv)
 
 	newImg := createImage([]byte(encImg), w, h)
 	writeImage(newImg)
 }
 
-// cannot run in parallel
 func encTextCbc(str []byte, s1, s2 [][]byte, perm []int, key []byte, iv []byte) string {
 	enc := ""
 	blockSize := 12
@@ -42,7 +42,6 @@ func encTextCbc(str []byte, s1, s2 [][]byte, perm []int, key []byte, iv []byte) 
 	return enc
 }
 
-// can run in parallel
 func encTextEcb(str []byte, s1, s2 [][]byte, perm []int, key []byte) string {
 	enc := ""
 	blockSize := 12
@@ -54,7 +53,7 @@ func encTextEcb(str []byte, s1, s2 [][]byte, perm []int, key []byte) string {
 			break
 		}
 		keycpy := slices.Clone(key)
-		enc += miniDesDec(str[i:i+blockSize], s1, s2, perm, keycpy)
+		enc += miniDesEnc(str[i:i+blockSize], s1, s2, perm, keycpy)
 	}
 
 	return enc
@@ -129,7 +128,7 @@ func createImage(img []byte, w, h int) image.Image {
 			b := binToInt(img[i+16 : i+24])
 
 			newImg.Set(x, y, color.RGBA{uint8(r), uint8(g), uint8(b), 255})
-			i += 36
+			i += 24
 		}
 	}
 
@@ -251,7 +250,7 @@ func jpegToBits(img image.Image) []byte {
 	bounds := img.Bounds()
 	width, height := bounds.Max.X, bounds.Max.Y
 
-	// each pixel is represented by binary values of 3 colors with the length of 12 bits each
+	// each pixel is represented by binary values of 3 colors with the length of 8 bits each
 	bits := make([]byte, 0, width*height*3*8)
 
 	for y := range height {

@@ -3,12 +3,11 @@ package main
 import (
 	"bufio"
 	"fmt"
-	"math/rand"
 	"net/http"
 	"os"
-	"regexp"
 	"slices"
 	"strings"
+	"unicode"
 )
 
 type freqKey interface {
@@ -16,7 +15,7 @@ type freqKey interface {
 }
 
 type freqDist[E freqKey] struct {
-	number    E
+	key       E
 	frequency int
 }
 
@@ -28,91 +27,66 @@ const dictLen = 26
 func main() {
 	initDict()
 	str := getInput()
-	peeledStr := peelString(str)
 	engDict := getEnglishDict()
 
-	distances := findSequenceDistances(peeledStr)
-	possibleLengths := getPossibleLenghts(distances, peeledStr)
+	strDec, key := cryptoanalysis(engDict, str)
+	str1 := strDec[:len(strDec)/2]
+	str2 := strDec[len(strDec)/2:]
 
-	strDec, key := cryptoanalysis(engDict, possibleLengths, str)
-
-	fmt.Printf("%s\n%s", string(strDec), string(key))
+	fmt.Printf("%s\n%s\n%s\n", string(str1), string(str2), string(key))
 }
 
-func cryptoanalysis(engDict [][]rune, possibleLengths []freqDist[int], str []rune) ([]rune, []rune) {
-	peeledStr := peelString(str)
-	for _, val := range possibleLengths {
-		fmt.Println("checking length: ", val.number)
-		partitionedStr := partitionString(peeledStr, val.number)
+func cryptoanalysis(engDict map[string]bool, encStr []rune) ([]rune, []rune) {
+	mostFreqSubkeys := findMostFreqSubkeys(encStr)
 
-		mostFreqKeys := getMostFreqKeys(partitionedStr)
+	possibleFullKeys := getPossibleFullKeys(mostFreqSubkeys)
 
-		possibleFullKeys := getPossibleFullKeys(mostFreqKeys)
+	possibleWordKeys := dictionaryAttackKeys(engDict, possibleFullKeys)
 
-		peeledDict := peelDictByLength(engDict, val.number)
+	for _, key := range possibleWordKeys {
+		decStr := dictionaryAttackCryptogram(engDict, encStr, key)
 
-		possibleKeys := dictionaryAttackKeys(peeledDict, possibleFullKeys)
+		if decStr != nil {
+			return decStr, key
+		}
+	}
 
-		for _, key := range possibleKeys {
-			strDec := dictionaryAttackCryptogram(engDict, str, key)
-			if strDec != nil {
-				return strDec, key
-			}
+	// if no match found, try all possible keys in case the key is not a word
+	for _, key := range possibleFullKeys {
+		decStr := dictionaryAttackCryptogram(engDict, encStr, key)
+		if decStr != nil {
+			return decStr, key
 		}
 	}
 
 	return nil, nil
 }
 
-func dictionaryAttackCryptogram(engDict [][]rune, str []rune, key []rune) []rune {
-	keyAsInt := make([]int, 0)
-	for _, c := range key {
-		keyAsInt = append(keyAsInt, dict[c])
+func dictionaryAttackCryptogram(engDict map[string]bool, encStr []rune, key []rune) []rune {
+	firstWord := make([]rune, len(key))
+	for i := 0; i < len(key); i++ {
+		firstWord[i] = decryptCharStd(encStr[i], dict[key[i]])
 	}
 
-	strDec := vigenereDecrypt(str, keyAsInt)
+	secondWord := make([]rune, len(key))
+	for i := 0; i < len(key); i++ {
+		secondWord[i] = decryptCharStd(encStr[i+len(key)], dict[key[i]])
+	}
 
-	strPeeled := []rune(regexp.MustCompile(`[^a-zA-Z \n]+`).ReplaceAllString(string(strDec), ""))
-
-	strSeparated := strings.Fields(string(strPeeled))
-
-	numOfTries := 20
-	expectedAccuracy := 0.2
-	numOfHits := 0
-	for i := 0; i < numOfTries; i++ {
-		r := rand.Intn(len(strSeparated))
-		randWord := strSeparated[r]
-
-		for _, word := range engDict {
-			if len(word) != len(randWord) {
-				continue
-			}
-			if string(word) == randWord {
-				numOfHits++
-			}
+	if _, ok := engDict[string(firstWord)]; ok {
+		if _, ok := engDict[string(secondWord)]; ok {
+			return append(firstWord, secondWord...)
 		}
-	}
-
-	if float64(numOfHits)/float64(numOfTries) >= expectedAccuracy {
-		return strDec
 	}
 
 	return nil
 }
 
-func dictionaryAttackKeys(engDict [][]rune, possibleFullKeys [][]rune) [][]rune {
+func dictionaryAttackKeys(engDict map[string]bool, possibleFullKeys [][]rune) [][]rune {
 	possibleKeys := make([][]rune, 0)
 
 	for _, key := range possibleFullKeys {
-		matched := false
-		for _, word := range engDict {
-			if string(key) == string(word) {
-				matched = true
-				break
-			}
-		}
-
-		if matched {
+		if _, ok := engDict[string(key)]; ok {
 			possibleKeys = append(possibleKeys, []rune{})
 			i := len(possibleKeys) - 1
 			possibleKeys[i] = append(possibleKeys[i], key...)
@@ -121,16 +95,6 @@ func dictionaryAttackKeys(engDict [][]rune, possibleFullKeys [][]rune) [][]rune 
 	}
 
 	return possibleKeys
-}
-
-func peelDictByLength(engDict [][]rune, l int) [][]rune {
-	peeledDict := make([][]rune, 0)
-	for _, word := range engDict {
-		if len(word) == l {
-			peeledDict = append(peeledDict, word)
-		}
-	}
-	return peeledDict
 }
 
 func getPossibleFullKeys(possibleSubkeys [][]rune) [][]rune {
@@ -160,91 +124,40 @@ func generateCombinations(possibleSubkeys [][]rune, index int, currentComb []run
 	return
 }
 
-func getMostFreqKeys(partitionedStr [][]rune) [][]rune {
-	mostFreqKeys := make([][]rune, len(partitionedStr))
+func findMostFreqSubkeys(str []rune) [][]rune {
+	partitionedStr := partitionString(str, len(str)/2)
 
-	for i, partition := range partitionedStr {
-		frequencies := make([]int, dictLen)
-		maxFreq := 0
-		for j := range frequencies {
-			strDec := make([]rune, len(partition))
-			for k, c := range partition {
-				dec := mod(dict[c]-j, dictLen)
-				strDec[k] = dictRev[dec]
+	// get candidate subkeys for each partition
+	probableSubkeys := make([][]rune, len(partitionedStr))
+	for pi, partition := range partitionedStr {
+		keysFreqs := make([]freqDist[rune], dictLen)
+		for k := range dictLen {
+			partitiondecrypted := make([]rune, len(partition))
+
+			for j, c := range partition {
+				partitiondecrypted[j] = decryptCharStd(c, k)
 			}
-			freq := analyzeFrequency(strDec)
-			frequencies[j] = freq
-			if freq > maxFreq {
-				maxFreq = freq
-			}
+			keysFreqs[k].key = dictRev[k]
+			keysFreqs[k].frequency = analyzeFrequency(partitiondecrypted)
 		}
 
-		for j, val := range frequencies {
-			// IMPORTANT NOTE - in case of shorter texts, the strictness of the condition can bo lowered,
-			// as maxFreq has a higher chance of being a false positive in such cases
-			// otherwise the condition should be kept as is for performance reasons
-			if maxFreq == val {
-				mostFreqKeys[i] = append(mostFreqKeys[i], dictRev[j])
-			}
-		}
+		slices.SortFunc(keysFreqs, compareFreqDistDesc[rune])
+		probableSubkeys[pi] = reduceKeys(keysFreqs)
 	}
 
-	return mostFreqKeys
+	return probableSubkeys
 }
 
-func partitionString(str []rune, distance int) [][]rune {
-	partitionedStr := make([][]rune, 0)
-
-	for i := 0; i < distance; i++ {
-		partitionedStr = append(partitionedStr, make([]rune, 0))
-		for j := i; j < len(str); j += distance {
-			partitionedStr[i] = append(partitionedStr[i], str[j])
+func reduceKeys(keysFreqs []freqDist[rune]) []rune {
+	// get top 6 keys + the ones that have max frequency
+	topKeys := make([]rune, 0)
+	for i := 0; i < dictLen; i++ {
+		if i < 6 || keysFreqs[0].frequency == keysFreqs[i].frequency {
+			topKeys = append(topKeys, keysFreqs[i].key)
 		}
 	}
 
-	return partitionedStr
-}
-
-func findSequenceDistances(str []rune) []int {
-	seqLen := 3
-	possibleLengths := make([]int, 0)
-
-	for i := 0; i < len(str)-seqLen; i++ {
-		seq := str[i : i+seqLen]
-		for j := i + 1; j < len(str)-seqLen; j++ {
-			consideredSeq := str[j : j+seqLen]
-			if string(seq) == string(consideredSeq) && !slices.Contains(possibleLengths, j-i) {
-				possibleLengths = append(possibleLengths, j-i)
-			}
-		}
-	}
-
-	return possibleLengths
-}
-
-func getPossibleLenghts(distances []int, str []rune) []freqDist[int] {
-	factorBuckets := make([]int, len(str)-3)
-
-	for _, val := range distances {
-		for i := 2; i <= val/2; i++ {
-			if val%i == 0 {
-				factorBuckets[i]++
-			}
-		}
-		factorBuckets[val]++
-	}
-
-	possibleLengths := analyseBuckets(factorBuckets)
-	trimmedPossibleLengths := make([]freqDist[int], 0)
-	for _, val := range possibleLengths {
-		if val.frequency > 0 && val.number < 17 {
-			trimmedPossibleLengths = append(trimmedPossibleLengths, val)
-		}
-	}
-
-	quickSort(possibleLengths, 0, len(possibleLengths)-1)
-
-	return trimmedPossibleLengths
+	return topKeys
 }
 
 func analyzeFrequency(str []rune) int {
@@ -253,172 +166,78 @@ func analyzeFrequency(str []rune) int {
 	mostFreq := []rune{'e', 't', 'a', 'o', 'i', 'n'}
 	leastFreq := []rune{'z', 'q', 'x', 'j', 'k', 'v'}
 
-	freqIndex := 0
-	for i := 0; i < 6; i++ {
-		c := freqDist[i].number
-		if slices.Contains(mostFreq, c) {
-			freqIndex++
+	frequency := 0
+	for i := 0; i < len(mostFreq)-3; i++ {
+		if slices.Contains(mostFreq, freqDist[i].key) {
+			frequency++
 		}
 	}
 
-	for i := len(freqDist) - 6; i < len(freqDist); i++ {
-		c := freqDist[i].number
-		if slices.Contains(leastFreq, c) {
-			freqIndex++
+	for i := dictLen - len(leastFreq) + 3; i < dictLen; i++ {
+		if slices.Contains(mostFreq, freqDist[i].key) {
+			frequency++
 		}
 	}
 
-	return freqIndex
+	return frequency
 }
 
-func vigenereDecrypt(str []rune, keys []int) []rune {
-	dec := ""
-	j := 0
+func getFreqDist(str []rune) []freqDist[rune] {
+	freqDist := make([]freqDist[rune], dictLen)
+	for i := 0; i < dictLen; i++ {
+		freqDist[i].key = dictRev[i]
+		freqDist[i].frequency = 0
+	}
+
 	for _, c := range str {
 		if !isLetter(c) {
-			dec += string(c)
 			continue
 		}
+		c = unicode.ToLower(c)
 
-		isUpper := isUppercase(c)
-		c = toLower(c)
-
-		decChar := dictRev[mod(int(dict[c])-keys[j], dictLen)]
-		if isUpper {
-			decChar = toUpper(decChar)
-		}
-		dec += string(decChar)
-		j++
-		j %= len(keys)
+		freqDist[dict[c]].frequency++
 	}
 
-	return []rune(dec)
+	slices.SortFunc(freqDist, compareFreqDistDesc[rune])
+
+	return freqDist
 }
 
-func getEnglishDict() [][]rune {
+func partitionString(str []rune, keyLen int) [][]rune {
+	partitionedStr := make([][]rune, keyLen)
+	for i, c := range str {
+		partitionedStr[i%keyLen] = append(partitionedStr[i%keyLen], c)
+	}
+
+	return partitionedStr
+}
+
+func decryptCharStd(char rune, key int) rune {
+	if dict[char]-key < 0 {
+		return dictRev[dict[char]-key+dictLen]
+	}
+	return dictRev[dict[char]-key]
+}
+
+func getEnglishDict() map[string]bool {
 	engDict, err := http.Get("https://stepik.org/media/attachments/lesson/668860/dictionary.txt")
 	if err != nil {
 		panic(err)
 	}
 	defer engDict.Body.Close()
-	engDictStr := make([][]rune, 0)
+	engDictStr := make([]string, 0)
 	scanner := bufio.NewScanner(engDict.Body)
 	for scanner.Scan() {
-		engDictStr = append(engDictStr, []rune(scanner.Text()))
+		engDictStr = append(engDictStr, scanner.Text())
 	}
 
-	for i, word := range engDictStr {
-		for j, c := range word {
-			engDictStr[i][j] = toLower(c)
-		}
+	engdic := make(map[string]bool, len(engDictStr))
+	for _, word := range engDictStr {
+		word = strings.ToLower(word)
+		engdic[word] = true
 	}
 
-	return engDictStr
-}
-
-func getFreqDist(str []rune) []freqDist[rune] {
-	freqDist := initFreqDist()
-
-	for _, c := range str {
-		if !isLetter(c) {
-			continue
-		}
-		c = toLower(c)
-
-		freqDist[dict[c]].frequency++
-	}
-
-	quickSort(freqDist, 0, len(freqDist)-1)
-
-	return freqDist
-}
-
-func initFreqDist() []freqDist[rune] {
-	freqDist := make([]freqDist[rune], dictLen)
-
-	for i := 0; i < dictLen; i++ {
-		freqDist[i].number = dictRev[i]
-		freqDist[i].frequency = 0
-	}
-
-	return freqDist
-}
-
-func analyseBuckets(buckets []int) []freqDist[int] {
-	possibleLengths := make([]freqDist[int], 0)
-
-	for i, val := range buckets {
-		if val > 0 {
-			possibleLengths = append(possibleLengths, freqDist[int]{i, val})
-		}
-	}
-
-	return possibleLengths
-}
-
-func peelString(str []rune) []rune {
-	peeledStr := make([]rune, 0)
-	for _, c := range str {
-		if isLetter(c) {
-			peeledStr = append(peeledStr, toLower(c))
-		}
-	}
-	return peeledStr
-}
-
-func isLetter(c rune) bool {
-	return (c >= 65 && c <= 90) || (c >= 97 && c <= 122)
-}
-
-func isUppercase(c rune) bool {
-	return (c >= 65 && c <= 90)
-}
-
-func toLower(c rune) rune {
-	if !isUppercase(c) {
-		return c
-	}
-	return c + 32
-}
-
-func toUpper(c rune) rune {
-	if isUppercase(c) {
-		return c
-	}
-	return c - 32
-}
-
-func mod(num int, z int) int {
-	num = num % z
-	if num < 0 {
-		num += z
-	}
-	return num
-}
-
-func quickSort[E freqKey](arr []freqDist[E], low int, high int) {
-	if low < high {
-		pivot := partition(arr, low, high)
-
-		quickSort(arr, low, pivot-1)
-		quickSort(arr, pivot+1, high)
-	}
-}
-
-func partition[E freqKey](arr []freqDist[E], low int, high int) int {
-	pivot := arr[high].frequency
-	i := low - 1
-
-	for j := low; j < high; j++ {
-		if arr[j].frequency > pivot {
-			i++
-			arr[i], arr[j] = arr[j], arr[i]
-		}
-	}
-
-	arr[i+1], arr[high] = arr[high], arr[i+1]
-
-	return i + 1
+	return engdic
 }
 
 func initDict() {
@@ -434,11 +253,11 @@ func getInput() []rune {
 	input := readInput()
 
 	var str []rune
-	for i, c := range input {
-		str = append(str, []rune(c)...)
-		if i != len(input)-1 {
-			str = append(str, '\n')
+	for _, c := range input {
+		if c == "\n" {
+			continue
 		}
+		str = append(str, []rune(c)...)
 	}
 
 	return str
@@ -453,4 +272,24 @@ func readInput() []string {
 	}
 
 	return s
+}
+
+func isLetter(c rune) bool {
+	return (c >= 65 && c <= 90) || (c >= 97 && c <= 122)
+}
+
+func compareFreqDistDesc[E freqKey](i, j freqDist[E]) int {
+
+	if i.frequency == j.frequency {
+		if i.key > j.key {
+			return -1
+		} else if i.key < j.key {
+			return 1
+		}
+		return 0
+	} else if i.frequency > j.frequency {
+		return -1
+	}
+
+	return 1
 }

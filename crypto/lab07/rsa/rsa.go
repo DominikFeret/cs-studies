@@ -4,9 +4,11 @@ import (
 	"bufio"
 	"crypto/rand"
 	"fmt"
+	"log"
 	"math/big"
 	"os"
 	"strings"
+	"sync"
 )
 
 type encData struct {
@@ -16,21 +18,74 @@ type encData struct {
 	blockSize int
 }
 
+type example struct {
+	text string
+	size int64
+}
+
 const (
 	keySize   = 2048
 	charRange = 95 // 32-126, all printable ASCII characters
 )
 
 func main() {
-	e, d, k := generateKeys(big.NewInt(keySize))
 
-	enc, err := rsaEncText("", e, k, 2)
-	if err != nil {
-		panic(err)
+	examples := []example{
+		{"Hello, World!", 4},
+		{"Ala ma kota", 5},
+		{"Very long text that should be encrypted", 53},
+		{"I'm running out of ideas for examples", 10},
 	}
 
-	dec := rsaDecText(&enc, d, k)
-	fmt.Println("Decrypted: ", dec)
+	runExamples(examples)
+}
+
+func runExamples(examples []example) {
+	wg := &sync.WaitGroup{}
+	for i, ex := range examples {
+		wg.Add(1)
+		go func() {
+			os.Mkdir("rsa_examples", os.ModePerm)
+			f, err := os.Create(fmt.Sprintf("rsa_examples/rsa_example_%v.txt", i+1))
+			defer f.Close()
+			if err != nil {
+				log.Print(err)
+			}
+			w := bufio.NewWriter(f)
+
+			e, d, k := generateKeys(big.NewInt(keySize))
+
+			_, err = w.Write([]byte(fmt.Sprintf("public key:\n%v\n\nprivate key:\n%vv\n\nkey:\n%v", e.String(), d.String(), k.String())))
+			if err != nil {
+				log.Print(err)
+			}
+
+			enc, err := rsaEncText(ex.text, e, k, ex.size)
+			if err != nil {
+				panic(err)
+			}
+
+			w.Write([]byte(fmt.Sprintf("\n\nencrypted text:\n")))
+
+			for j, b := range enc.blocks {
+				w.Write([]byte(fmt.Sprintf("%v", b.String())))
+				if j != len(enc.blocks)-1 {
+					w.Write([]byte(","))
+				}
+			}
+
+			dec := rsaDecText(&enc, d, k)
+			w.Write([]byte(fmt.Sprintf("\n\nplain text:\n%v\n", dec)))
+
+			if err = w.Flush(); err != nil {
+				log.Print(err)
+			}
+
+			wg.Done()
+		}()
+	}
+
+	wg.Wait()
 }
 
 func rsaEncText(text string, e, k *big.Int, n int64) (encData, error) {
@@ -51,7 +106,7 @@ func rsaEncText(text string, e, k *big.Int, n int64) (encData, error) {
 				break
 			}
 			c := big.NewInt(int64(text[i+j]))
-			c.Mul(c, base.Lsh(base, uint(j-1)))
+			c.Mul(c, big.NewInt(0).Exp(base, big.NewInt(int64(j)), nil))
 			blocks[bi].Add(blocks[bi], c)
 		}
 		blocks[bi] = rsaEnc(blocks[bi], e, k)
@@ -89,9 +144,8 @@ func rsaDecText(encData *encData, d, n *big.Int) string {
 				if j == 0 {
 					return big.NewInt(1)
 				}
-				return big.NewInt(0).Lsh(big.NewInt(int64(base)), uint(j-1))
+				return big.NewInt(0).Exp(big.NewInt(int64(base)), big.NewInt(int64(j)), nil)
 			}()
-			fmt.Printf("Current block: %v\tCurrent divisor: %v\n", blocks[i], divisor)
 			ascii := big.NewInt(0).Div(blocks[i], divisor)
 			txt[ti] = byte(ascii.Int64())
 			blocks[i] = blocks[i].Mod(blocks[i], divisor)

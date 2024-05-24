@@ -44,7 +44,7 @@ func runExamples(examples []example) {
 	wg := &sync.WaitGroup{}
 	for i, ex := range examples {
 		wg.Add(1)
-		go func() {
+		go func(i int, ex example) {
 			os.Mkdir("rsa_examples", os.ModePerm)
 			f, err := os.Create(fmt.Sprintf("rsa_examples/rsa_example_%v.txt", i+1))
 			defer f.Close()
@@ -82,7 +82,7 @@ func runExamples(examples []example) {
 			}
 
 			wg.Done()
-		}()
+		}(i, ex)
 	}
 
 	wg.Wait()

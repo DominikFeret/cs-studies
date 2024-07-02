@@ -10,11 +10,8 @@ This repository contains various projects and assignments completed during my Co
 - **Cryptography**
   - Implementations and experiments with various cryptographic algorithms.
 
-- **CSA (Computer Systems and Architecture)**
+- **CSA (Computer Systems Architecture)**
   - Projects related to computer architecture and systems programming.
-
-- **Miscellaneous**
-  - Various other assignments and projects from different courses.
 
 ## License
 

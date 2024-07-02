@@ -3,12 +3,12 @@ package main
 import (
 	"bufio"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
-	"log"
 	"math/big"
 	"os"
 	"strings"
-	"sync"
 )
 
 type encData struct {
@@ -24,71 +24,41 @@ type example struct {
 }
 
 const (
-	keySize   = 24
+	keySize   = 2048
 	charRange = 95 // 32-126, all printable ASCII characters
 )
 
 func main() {
-
-	examples := []example{
-		{"Hello, World!", 3},
-		{"Ala ma kota", 3},
-		// {"Very long text that should be encrypted", 53},
-		// {"I'm running out of ideas for examples", 10},
-		// {"dffd6021bb2bd5b0af676290809ec3a53191dd81c7f70a4b28688a362182986f", 4},
-		// {"dffd6021bb2bd5b0af676290809ec3a53191dd81c7f70a4b28688a362182986f", 5},
-		// {"divisible by block  size", 8},
-	}
-
-	runExamples(examples)
+	ex := []byte("Hello, World!")
+	runRsaSign(ex)
 }
 
-func runExamples(examples []example) {
-	wg := &sync.WaitGroup{}
-	for i, ex := range examples {
-		wg.Add(1)
-		go func(i int, ex example) {
-			os.Mkdir("rsa_examples", os.ModePerm)
-			f, err := os.Create(fmt.Sprintf("rsa_examples/rsa_example_%v.txt", i+1))
-			defer f.Close()
-			if err != nil {
-				log.Print(err)
-			}
-			w := bufio.NewWriter(f)
+func runRsaSign(msg []byte) {
+	e, d, n := generateKeys(big.NewInt(keySize))
+	enc := rsaSign(msg, e, n)
 
-			e, d, k := generateKeys(big.NewInt(keySize))
+	dec := rsaDecText(&enc, d, n)
 
-			_, err = w.Write([]byte(fmt.Sprintf("public key:\n%v\n\nprivate key:\n%vv\n\nkey:\n%v", e.String(), d.String(), k.String())))
-			if err != nil {
-				log.Print(err)
-			}
+	h := sha256.New()
+	h.Write(msg)
+	hash := hex.EncodeToString(h.Sum(nil))
 
-			enc, err := rsaEncText(ex.text, e, k, ex.size)
-			if err != nil {
-				panic(err)
-			}
+	fmt.Println("Original message:", string(msg))
+	fmt.Println("Decrypted message:", dec)
+	fmt.Println("Hash:", hash)
+}
 
-			w.Write([]byte(fmt.Sprintf("\n\nencrypted text:\n")))
+func rsaSign(msg []byte, e, k *big.Int) encData {
+	h := sha256.New()
+	h.Write(msg)
+	hash := hex.EncodeToString(h.Sum(nil))
 
-			for j, b := range enc.blocks {
-				w.Write([]byte(fmt.Sprintf("%v", b.String())))
-				if j != len(enc.blocks)-1 {
-					w.Write([]byte(","))
-				}
-			}
-
-			dec := rsaDecText(&enc, d, k)
-			w.Write([]byte(fmt.Sprintf("\n\nplain text:\n%v\n", dec)))
-
-			if err = w.Flush(); err != nil {
-				log.Print(err)
-			}
-
-			wg.Done()
-		}(i, ex)
+	encData, err := rsaEncText(hash, e, k, 4)
+	if err != nil {
+		panic(err)
 	}
 
-	wg.Wait()
+	return encData
 }
 
 func rsaEncText(text string, e, k *big.Int, n int64) (encData, error) {

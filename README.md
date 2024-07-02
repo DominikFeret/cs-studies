@@ -1,6 +1,6 @@
 # CS Studies
 
-This repository contains various projects and assignments completed during my Computer Science degree at [Your University].
+This repository contains various projects and assignments completed during my Computer Science degree at the University of Gdańsk.
 
 ## Contents
 
@@ -22,7 +22,7 @@ This repository is licensed under the MIT License. See the [LICENSE](LICENSE) fi
 
 ## Contact
 
-For any questions or collaboration, please reach out to me at [dominik.feret@example.com](mailto:dominik.feret@example.com).
+For any questions or collaboration, please reach out to me at [dominik.feret03@gmail.com](mailto:dominik.feret03@gmail.com).
 
 ---
 
